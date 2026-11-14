@@ -36,7 +36,7 @@ main{justify-content:center;width:calc(100% - 30px);padding:clamp(144px,29svh,23
 <p class="venue">Art of Living International Centre · Bengaluru</p>
 <h1 id="title">Devotee Registration</h1>
 <p class="date"><time datetime="2026-11-29">Sunday, 29 November 2026</time></p>
-<form id="registration">
+<form id="registration" method="post" target="_self">
 <div class="field">
 <label for="name">Name <span lang="kn">· ಹೆಸರು</span></label>
 <input id="name" name="full_name" autocomplete="name" maxlength="100" required>
@@ -50,10 +50,6 @@ main{justify-content:center;width:calc(100% - 30px);padding:clamp(144px,29svh,23
 <button type="submit">Submit <span lang="kn">· ಸಲ್ಲಿಸಿ</span></button>
 <p id="status" class="status" role="alert"></p>
 </form>
-<section id="thanks" hidden>
-<h2 tabindex="-1">Thank you!</h2>
-<p>Your registration has been saved.<br><span lang="kn">ಧನ್ಯವಾದಗಳು! ನಿಮ್ಮ ನೋಂದಣಿ ಪೂರ್ಣಗೊಂಡಿದೆ.</span></p>
-</section>
 <noscript><p>Enable JavaScript to submit your registration.</p></noscript>
 </section>
 </main>
@@ -63,84 +59,43 @@ const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwQ8Tvxc73l7uRRlMqT
 const form = document.querySelector('#registration');
 const button = form.querySelector('button');
 const status = document.querySelector('#status');
-let pending;
 let lastSubmission;
 
-function token() {
-  return Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('');
-}
-
-function finish(message) {
-  clearTimeout(pending.timer);
-  pending.frame.remove();
-  pending = undefined;
-  button.disabled = false;
-  form.removeAttribute('aria-busy');
-  status.textContent = message;
-}
-
 form.addEventListener('submit', event => {
-  event.preventDefault();
-  if (pending) return;
   if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(WEB_APP_URL)) {
+    event.preventDefault();
     status.textContent = 'Registration is awaiting setup. Please contact an event volunteer.';
     return;
   }
   const fullName = form.elements.full_name.value.trim();
   const phone = form.elements.phone.value.trim();
   if (!fullName) {
+    event.preventDefault();
     status.textContent = 'Please enter your name.';
     form.elements.full_name.focus();
     return;
   }
   if (!lastSubmission || lastSubmission.fullName !== fullName || lastSubmission.phone !== phone) {
-    lastSubmission = {fullName, phone, id: token()};
+    const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('');
+    lastSubmission = {fullName, phone, id};
   }
-  const attempt = token();
-  const frame = document.createElement('iframe');
-  frame.name = 'registration-' + attempt;
-  frame.hidden = true;
-  frame.title = 'Registration response';
-  document.body.append(frame);
-  const post = document.createElement('form');
-  post.hidden = true;
-  post.action = WEB_APP_URL;
-  post.method = 'POST';
-  post.target = frame.name;
-  const fields = {full_name: fullName, phone, request_id: lastSubmission.id, attempt, site_origin: location.origin};
+  form.querySelectorAll('input[type="hidden"]').forEach(input => input.remove());
+  const fields = {request_id: lastSubmission.id, return_url: location.origin + location.pathname};
   for (const [key, value] of Object.entries(fields)) {
     const input = document.createElement('input');
     input.type = 'hidden';
     input.name = key;
     input.value = value;
-    post.append(input);
+    form.append(input);
   }
-  status.textContent = 'Saving your registration…';
+  form.action = WEB_APP_URL;
   button.disabled = true;
-  form.setAttribute('aria-busy', 'true');
-  pending = {attempt, frame, timer: setTimeout(() => {
-    finish('We couldn’t confirm your registration. Check your connection and tap Submit again.');
-  }, 20000)};
-  document.body.append(post);
-  post.submit();
-  post.remove();
+  status.textContent = 'Saving your registration…';
 });
 
-window.addEventListener('message', event => {
-  if (!pending || !/^https:\/\/(?:script\.google\.com|script\.googleusercontent\.com|[a-z0-9-]+-script\.googleusercontent\.com)$/.test(event.origin)) return;
-  const reply = event.data;
-  if (!reply || reply.kind !== 'aol-registration' || reply.attempt !== pending.attempt) return;
-  if (reply.result === 'saved') {
-    finish('');
-    form.reset();
-    form.hidden = true;
-    document.querySelector('#thanks').hidden = false;
-    document.querySelector('#thanks h2').focus();
-  } else {
-    finish(reply.result === 'invalid'
-      ? 'Please check your name and 10-digit mobile number.'
-      : 'We couldn’t confirm your registration. Please try again.');
-  }
+window.addEventListener('pageshow', () => {
+  button.disabled = false;
+  status.textContent = '';
 });
 </script>
 </body>
