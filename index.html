@@ -28,6 +28,11 @@ button:disabled{cursor:wait;opacity:.72}
 #thanks p{line-height:1.55;margin-bottom:0}
 @media(max-width:700px){body{background-position:27% top;background-size:auto min(68svh,560px);align-items:start;background-image:linear-gradient(to bottom,transparent 65%,#17121a 100%),var(--scene)}
 main{justify-content:center;width:calc(100% - 30px);padding:clamp(144px,29svh,235px) 0 25px}.card{border-radius:18px}h1{font-size:2.45rem}}
+.location-box{margin:20px 0;padding:16px;border:1px solid #d2bda4;border-radius:12px;background:#fffdf8}
+.location-box h3{margin:0 0 8px;font-size:1rem}
+#capture-location{background:#f3e9da;color:#532c3b;border:1px solid #bda180}
+#location-status{font-size:.86rem;line-height:1.5;margin-bottom:0}
+dl{font-size:.86rem;line-height:1.5}dt{font-weight:700;margin-top:8px}dd{margin:0;overflow-wrap:anywhere}
 </style>
 </head>
 <body>
@@ -47,6 +52,19 @@ main{justify-content:center;width:calc(100% - 30px);padding:clamp(144px,29svh,23
 <p id="phone-hint" class="note">10 digits without +91 · <span lang="kn">+91 ಇಲ್ಲದೆ 10 ಅಂಕೆಗಳು</span></p>
 </div>
 <p class="note">Art of Living will use your name and mobile number to register you for this event.</p>
+<section class="location-box" aria-labelledby="location-title">
+<h3 id="location-title">Your current location</h3>
+<p class="note">Tap below to share this device’s location with Art of Living for this registration. Coordinates are sent to Google to find an approximate place name.</p>
+<button type="button" id="capture-location">Capture my location · ಸ್ಥಳ ಪಡೆಯಿರಿ</button>
+<p id="location-status" role="status" aria-live="polite">Location has not been shared.</p>
+<dl id="location-details" hidden>
+<dt>Coordinates</dt><dd id="coordinates"></dd>
+<dt>Reported accuracy</dt><dd id="accuracy"></dd>
+<dt>Approximate place · ಸ್ಥಳ</dt><dd id="place-name"></dd>
+</dl>
+<p class="note">Location is optional. This is the device’s current location when captured.</p>
+</section>
+
 <button type="submit">Submit <span lang="kn">· ಸಲ್ಲಿಸಿ</span></button>
 <p id="status" class="status" role="alert"></p>
 </form>
@@ -57,11 +75,106 @@ main{justify-content:center;width:calc(100% - 30px);padding:clamp(144px,29svh,23
 'use strict';
 const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwAJshxHnXknTJCZlmhZ-Yv3_Mr36TrLxxPqUBVko19dl-4n3Vqd6Kmdl07RkMU487i/exec';
 const form = document.querySelector('#registration');
-const button = form.querySelector('button');
+const button = form.querySelector('[type=submit]');
 const status = document.querySelector('#status');
 let lastSubmission;
+const captureButton = document.querySelector('#capture-location');
+const locationStatus = document.querySelector('#location-status');
+const locationDetails = document.querySelector('#location-details');
+let locationData = {location_status: 'not_requested'};
+let locating = false;
+
+function lookupPlace(latitude, longitude) {
+  return new Promise((resolve, reject) => {
+    const callback = 'aolPlace_' + Array.from(crypto.getRandomValues(new Uint8Array(8)), n => n.toString(16).padStart(2, '0')).join('');
+    const script = document.createElement('script');
+    const url = new URL(WEB_APP_URL);
+    url.search = new URLSearchParams({action: 'place', lat: latitude, lng: longitude, callback});
+    let settled = false;
+    function finish(error, result) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      script.remove();
+      // Keep a harmless callback briefly in case a timed-out response arrives late.
+      window[callback] = () => {};
+      setTimeout(() => { delete window[callback]; }, 60000);
+      if (error) reject(error); else resolve(result);
+    }
+    const timer = setTimeout(() => finish(new Error('Place lookup timed out')), 18000);
+    window[callback] = result => finish(null, result);
+    script.onerror = () => finish(new Error('Place lookup failed'));
+    script.referrerPolicy = 'no-referrer';
+    script.src = url.href;
+    document.body.append(script);
+  });
+}
+
+captureButton.addEventListener('click', () => {
+  if (locating) return;
+  if (!window.isSecureContext || !navigator.geolocation) {
+    locationData = {location_status: 'unsupported'};
+    locationStatus.textContent = 'Open the published HTTPS page in Chrome or Safari to share location.';
+    return;
+  }
+  locating = true;
+  captureButton.disabled = true;
+  button.disabled = true;
+  locationDetails.hidden = true;
+  locationData = {location_status: 'requesting'};
+  locationStatus.textContent = 'Allow location access when your browser asks. Finding your position…';
+  navigator.geolocation.getCurrentPosition(async position => {
+    const c = position.coords;
+    locationData = {
+      latitude: c.latitude.toFixed(6),
+      longitude: c.longitude.toFixed(6),
+      accuracy_m: c.accuracy.toFixed(1),
+      location_time: new Date(position.timestamp).toISOString(),
+      place_name: '',
+      location_status: 'coordinates_only'
+    };
+    document.querySelector('#coordinates').textContent = locationData.latitude + ', ' + locationData.longitude;
+    document.querySelector('#accuracy').textContent = '± ' + Math.round(c.accuracy) + ' metres';
+    document.querySelector('#place-name').textContent = 'Looking up place name…';
+    locationDetails.hidden = false;
+    locationStatus.textContent = 'Coordinates captured. Finding the place name…';
+    try {
+      const result = await lookupPlace(locationData.latitude, locationData.longitude);
+      if (!result || result.status !== 'ok' || !result.place) throw new Error('No place name');
+      locationData.place_name = String(result.place).slice(0, 500);
+      locationData.location_status = 'captured';
+      document.querySelector('#place-name').textContent = locationData.place_name;
+      locationStatus.textContent = 'Location is ready to save with your registration.';
+    } catch {
+      document.querySelector('#place-name').textContent = 'Place name unavailable';
+      locationStatus.textContent = 'Coordinates captured. The place name is unavailable; you can still submit.';
+    } finally {
+      locating = false;
+      captureButton.disabled = false;
+      button.disabled = false;
+      captureButton.textContent = 'Refresh my location';
+    }
+  }, error => {
+    locationData = {location_status: ({1:'permission_denied',2:'unavailable',3:'timeout'})[error.code] || 'unavailable'};
+    locationStatus.textContent = ({
+      1: 'Location access was declined. You can allow it in your browser’s site settings and try again, or submit without location.',
+      2: 'Location is unavailable. Turn on phone Location, then try again or submit without location.',
+      3: 'Finding your location took too long. Try again near a window, or submit without location.'
+    })[error.code] || 'Unable to capture location. You can still register.';
+    locating = false;
+    captureButton.disabled = false;
+    button.disabled = false;
+  }, {enableHighAccuracy: true, timeout: 20000, maximumAge: 0});
+});
+
+
 
 form.addEventListener('submit', event => {
+  if (locating) {
+    event.preventDefault();
+    status.textContent = 'Please wait for the location check to finish.';
+    return;
+  }
   if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(WEB_APP_URL)) {
     event.preventDefault();
     status.textContent = 'Registration is awaiting setup. Please contact an event volunteer.';
@@ -80,7 +193,7 @@ form.addEventListener('submit', event => {
     lastSubmission = {fullName, phone, id};
   }
   form.querySelectorAll('input[type="hidden"]').forEach(input => input.remove());
-  const fields = {request_id: lastSubmission.id, return_url: location.origin + location.pathname};
+  const fields = {request_id: lastSubmission.id, return_url: location.origin + location.pathname, ...locationData};
   for (const [key, value] of Object.entries(fields)) {
     const input = document.createElement('input');
     input.type = 'hidden';
