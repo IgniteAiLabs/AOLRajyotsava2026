@@ -52,10 +52,15 @@ dl{font-size:.86rem;line-height:1.5}dt{font-weight:700;margin-top:8px}dd{margin:
 <p id="phone-hint" class="note">10 digits without +91 · <span lang="kn">+91 ಇಲ್ಲದೆ 10 ಅಂಕೆಗಳು</span></p>
 </div>
 <p class="note">Art of Living will use your name and mobile number to register you for this event.</p>
+<div class="field">
+<label for="postal-pin">Postal PIN code <span lang="kn">· ಅಂಚೆ ಪಿನ್ ಕೋಡ್</span></label>
+<input id="postal-pin" name="postal_pin" type="text" inputmode="numeric" autocomplete="postal-code" pattern="[1-9][0-9]{5}" maxlength="6" required aria-describedby="pin-hint">
+<p id="pin-hint" class="note">Enter your six-digit PIN code, or use location below to suggest one. You can edit the suggestion.</p>
+</div>
 <section class="location-box" aria-labelledby="location-title">
-<h3 id="location-title">Your current location</h3>
-<p class="note">Tap below to share this device’s location with Art of Living for this registration. Coordinates are sent to Google to find an approximate place name.</p>
-<button type="button" id="capture-location">Capture my location · ಸ್ಥಳ ಪಡೆಯಿರಿ</button>
+<h3 id="location-title">Find PIN code using location (optional)</h3>
+<p class="note">Tap below to share this device’s location with Art of Living for this registration. Coordinates are sent to Google to suggest an approximate PIN code and place. You can register by entering a PIN code yourself.</p>
+<button type="button" id="capture-location">Suggest PIN using my location</button>
 <p id="location-status" role="status" aria-live="polite">Location has not been shared.</p>
 <dl id="location-details" hidden>
 <dt>Coordinates</dt><dd id="coordinates"></dd>
@@ -73,7 +78,7 @@ dl{font-size:.86rem;line-height:1.5}dt{font-weight:700;margin-top:8px}dd{margin:
 </main>
 <script>
 'use strict';
-const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxmFYqRUF890ndUYvagKHmssbzRFzlv_MKvAKhKcdWn59Q9VQObHsalWpkF3QHDSOmF/exec';
+const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwAJshxHnXknTJCZlmhZ-Yv3_Mr36TrLxxPqUBVko19dl-4n3Vqd6Kmdl07RkMU487i/exec';
 const form = document.querySelector('#registration');
 const button = form.querySelector('[type=submit]');
 const status = document.querySelector('#status');
@@ -83,6 +88,10 @@ const locationStatus = document.querySelector('#location-status');
 const locationDetails = document.querySelector('#location-details');
 let locationData = {location_status: 'not_requested'};
 let locating = false;
+const pinInput = document.querySelector('#postal-pin');
+let pinRevision = 0;
+let suggestedPin = '';
+pinInput.addEventListener('input', () => { pinRevision += 1; });
 
 function lookupPlace(latitude, longitude) {
   return new Promise((resolve, reject) => {
@@ -117,6 +126,8 @@ captureButton.addEventListener('click', () => {
     locationStatus.textContent = 'Open the published HTTPS page in Chrome or Safari to share location.';
     return;
   }
+  const startingPinRevision = pinRevision;
+  const startingPinValue = pinInput.value;
   locating = true;
   captureButton.disabled = true;
   button.disabled = true;
@@ -140,19 +151,27 @@ captureButton.addEventListener('click', () => {
     locationStatus.textContent = 'Coordinates captured. Finding the place name…';
     try {
       const result = await lookupPlace(locationData.latitude, locationData.longitude);
-      if (!result || result.status !== 'ok' || !result.place) throw new Error('No place name');
-      locationData.place_name = String(result.place).slice(0, 500);
+      if (!result || result.status !== 'ok') throw new Error('No place name');
+      locationData.place_name = String(result.place || '').slice(0, 500);
       locationData.location_status = 'captured';
       document.querySelector('#place-name').textContent = locationData.place_name;
-      locationStatus.textContent = 'Location is ready to save with your registration.';
+      suggestedPin = /^[1-9][0-9]{5}$/.test(String(result.postal_pin || '')) ? String(result.postal_pin) : '';
+      if (suggestedPin && pinRevision === startingPinRevision && pinInput.value === startingPinValue && !startingPinValue) {
+        pinInput.value = suggestedPin;
+        locationStatus.textContent = 'Suggested PIN code filled in. Please check it and edit if needed.';
+      } else if (suggestedPin) {
+        locationStatus.textContent = 'Nearby PIN suggestion: ' + suggestedPin + '. Your entered PIN has been kept. Edit the box if needed.';
+      } else {
+        locationStatus.textContent = 'PIN code could not be found. Please enter it in the box above.';
+      }
     } catch {
       document.querySelector('#place-name').textContent = 'Place name unavailable';
-      locationStatus.textContent = 'Coordinates captured. The place name is unavailable; you can still submit.';
+      locationStatus.textContent = 'Location captured but lookup failed. Enter the PIN code yourself to continue.';
     } finally {
       locating = false;
       captureButton.disabled = false;
       button.disabled = false;
-      captureButton.textContent = 'Refresh my location';
+      captureButton.textContent = 'Refresh PIN suggestion';
     }
   }, error => {
     locationData = {location_status: ({1:'permission_denied',2:'unavailable',3:'timeout'})[error.code] || 'unavailable'};
@@ -188,12 +207,19 @@ form.addEventListener('submit', event => {
     form.elements.full_name.focus();
     return;
   }
-  if (!lastSubmission || lastSubmission.fullName !== fullName || lastSubmission.phone !== phone) {
+  const postalPin = pinInput.value.trim();
+  if (!/^[1-9][0-9]{5}$/.test(postalPin)) {
+    event.preventDefault();
+    status.textContent = 'Enter a valid six-digit Indian PIN code.';
+    pinInput.focus();
+    return;
+  }
+  if (!lastSubmission || lastSubmission.fullName !== fullName || lastSubmission.phone !== phone || lastSubmission.postalPin !== postalPin) {
     const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('');
-    lastSubmission = {fullName, phone, id};
+    lastSubmission = {fullName, phone, postalPin, id};
   }
   form.querySelectorAll('input[type="hidden"]').forEach(input => input.remove());
-  const fields = {request_id: lastSubmission.id, return_url: location.origin + location.pathname, ...locationData};
+  const fields = {request_id: lastSubmission.id, return_url: location.origin + location.pathname, ...locationData, pin_source: suggestedPin && postalPin === suggestedPin ? 'gps_suggestion' : 'user_entered'};
   for (const [key, value] of Object.entries(fields)) {
     const input = document.createElement('input');
     input.type = 'hidden';
