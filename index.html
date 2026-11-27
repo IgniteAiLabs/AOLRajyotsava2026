@@ -65,6 +65,7 @@ main{position:relative;z-index:1}
 <p id="pin-hint" class="note">Enter your six-digit postal PIN. The PIN shown here will be saved.</p>
 </div>
 <input type="hidden" name="request_id">
+<input type="hidden" name="submitted_at_ms">
 <input type="hidden" name="cf-turnstile-response">
 <div id="verification"></div>
 <button type="submit" disabled>Submit <span lang="kn">· ಸಲ್ಲಿಸಿ</span></button>
@@ -160,6 +161,7 @@ form.addEventListener('submit', event => {
       byte => byte.toString(16).padStart(2, '0')).join('');
   }
   try { sessionStorage.setItem(storageKey, requestId.value); } catch {}
+  form.elements.namedItem('submitted_at_ms').value = String(Date.now());
   checking = true;
   tokenField.value = '';
   submitButton.disabled = true;
